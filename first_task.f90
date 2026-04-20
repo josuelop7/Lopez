@@ -1,6 +1,3 @@
-! ============================================================
-! Module containing the kernels (device subroutines)
-! ============================================================
 module suma_kernels
     use cudafor
     implicit none
@@ -32,19 +29,15 @@ contains
 
 end module suma_kernels
 
-! ============================================================
-! Main program: first_task
-! ============================================================
 program first_task
     use cudafor
     use suma_kernels
     implicit none
 
-    ! Parameters
-    integer, parameter :: n_vec = 1024 * 64      ! Vector size
-    integer, parameter :: n_mat = 128             ! Matrix dimension (square)
-    integer, parameter :: tPB_vec = 256            ! Threads per block for vectors
-    integer, parameter :: tPBx_mat = 16, tPBy_mat = 16   ! Threads per block for matrix (32x8 = 256)
+    integer, parameter :: n_vec = 1024 * 64   
+    integer, parameter :: n_mat = 128             
+    integer, parameter :: tPB_vec = 256            
+    integer, parameter :: tPBx_mat = 16, tPBy_mat = 16   
     real, allocatable :: v1(:), v2(:), v_gpu(:), v_cpu(:)
     real, allocatable :: A(:,:), B(:,:), C_gpu(:,:), C_cpu(:,:)
     type(dim3) :: grid_vec, tBlock_vec
@@ -58,11 +51,11 @@ program first_task
     allocate(v1(n_vec), v2(n_vec), v_gpu(n_vec), v_cpu(n_vec), stat=ierr)
     if (ierr /= 0) stop 'Vector alloc failed'
 
-    ! Initialization (arbitrary values, as in class)
+    
     v1 = [(real(i), i=1, n_vec)]
     v2 = [(real(n_vec - i + 1), i=1, n_vec)]
 
-    ! Launch configuration for vectors
+   
     tBlock_vec = dim3(tPB_vec, 1, 1)
     grid_vec = dim3(ceiling(real(n_vec) / tPB_vec), 1, 1)
 
@@ -118,7 +111,6 @@ program first_task
 contains
 
     ! ------------------------------------------------------------
-    ! Helper subroutine that manages device memory and launches kernel for vectors
     ! ------------------------------------------------------------
     subroutine suma_vector_gpu(a, b, c, grid, tBlock)
         real, intent(in)  :: a(:), b(:)
@@ -136,7 +128,6 @@ contains
     end subroutine suma_vector_gpu
 
     ! ------------------------------------------------------------
-    ! CPU subroutine for vectors (verification)
     ! ------------------------------------------------------------
     subroutine suma_vector_cpu(a, b, c)
         real, intent(in)  :: a(:), b(:)
@@ -148,7 +139,6 @@ contains
     end subroutine suma_vector_cpu
 
     ! ------------------------------------------------------------
-    ! Helper subroutine for matrices on GPU
     ! ------------------------------------------------------------
     subroutine suma_matriz_gpu(A, B, C, grid, tBlock)
         real, intent(in)  :: A(:,:), B(:,:)
@@ -166,7 +156,6 @@ contains
     end subroutine suma_matriz_gpu
 
     ! ------------------------------------------------------------
-    ! CPU subroutine for matrices (verification)
     ! ------------------------------------------------------------
     subroutine suma_matriz_cpu(A, B, C)
         real, intent(in)  :: A(:,:), B(:,:)
