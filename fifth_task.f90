@@ -17,7 +17,9 @@ program fifth_task
     integer(cuda_stream_kind), allocatable :: streams(:)
     type(cublasHandle) :: handle_ser
 
-    real :: t0, t1, time_serial, time_concurrent
+    integer(cuda_event_kind) :: start_event, stop_event
+
+    real :: time_serial_ms, time_concurrent_ms
     real(8) :: flops, bandwidth, gflops_serial, gflops_conc
     real(8) :: bytes_total
     integer :: chunk_size, start_col, end_col
@@ -45,17 +47,31 @@ program fifth_task
     flops = 2.d0 * dble(M) * dble(N) * dble(K_large)
     bytes_total = dble(M*N + N*K_large + M*K_large) * 8.d0
 
+    istat = cudaEventCreate(start_event)
+    if (istat /= 0) stop "Event creation failed"
+    istat = cudaEventCreate(stop_event)
+    if (istat /= 0) stop "Event creation failed"
+
     istat = cublasCreate(handle_ser)
     if (istat /= CUBLAS_STATUS_SUCCESS) stop "cublasCreate serial failed"
 
-    call cpu_time(t0)
+    istat = cublasDgemm_v2(handle_ser, CUBLAS_OP_N, CUBLAS_OP_N, &
+                           M, K_large, N, alpha, A_d, M, B_d, N, beta, C_d, M)
+    if (istat /= CUBLAS_STATUS_SUCCESS) stop "Serial Dgemm warmup failed"
+    istat = cudaDeviceSynchronize()
+    if (istat /= 0) stop "Synchronize failed"
+
+    istat = cudaEventRecord(start_event, 0)
     istat = cublasDgemm_v2(handle_ser, CUBLAS_OP_N, CUBLAS_OP_N, &
                            M, K_large, N, alpha, A_d, M, B_d, N, beta, C_d, M)
     if (istat /= CUBLAS_STATUS_SUCCESS) stop "Serial Dgemm failed"
-    istat = cudaDeviceSynchronize()
-    if (istat /= 0) stop "Synchronize failed"
-    call cpu_time(t1)
-    time_serial = t1 - t0
+    istat = cudaEventRecord(stop_event, 0)
+    if (istat /= 0) stop "Event record failed"
+
+    istat = cudaEventSynchronize(stop_event)
+    if (istat /= 0) stop "Event sync failed"
+    istat = cudaEventElapsedTime(time_serial_ms, start_event, stop_event)
+    if (istat /= 0) stop "Event elapsed time failed"
 
     C_serial = C_d
     istat = cublasDestroy(handle_ser)
@@ -75,7 +91,30 @@ program fifth_task
 
     chunk_size = K_large / NUM_STREAMS
 
-    call cpu_time(t0)
+    do s = 1, NUM_STREAMS
+        start_col = (s-1) * chunk_size + 1
+        if (s == NUM_STREAMS) then
+            end_col = K_large
+        else
+            end_col = start_col + chunk_size - 1
+        end if
+        istat = cublasDgemm_v2(handles(s), CUBLAS_OP_N, CUBLAS_OP_N, &
+                               M, end_col-start_col+1, N, &
+                               alpha, A_d, M, B_d(1,start_col), N, beta, &
+                               C_d(1,start_col), M)
+        if (istat /= CUBLAS_STATUS_SUCCESS) then
+            print *, "cublasDgemm warmup error in stream", s
+            stop
+        end if
+    end do
+
+    do s = 1, NUM_STREAMS
+        istat = cudaStreamSynchronize(streams(s))
+        if (istat /= 0) stop "Stream sync error during warmup"
+    end do
+    C_d = 0.d0
+
+    istat = cudaEventRecord(start_event, 0)
     do s = 1, NUM_STREAMS
         start_col = (s-1) * chunk_size + 1
         if (s == NUM_STREAMS) then
@@ -98,8 +137,12 @@ program fifth_task
         istat = cudaStreamSynchronize(streams(s))
         if (istat /= 0) stop "Stream sync error"
     end do
-    call cpu_time(t1)
-    time_concurrent = t1 - t0
+    istat = cudaEventRecord(stop_event, 0)
+    if (istat /= 0) stop "Event record failed"
+    istat = cudaEventSynchronize(stop_event)
+    if (istat /= 0) stop "Event sync failed"
+    istat = cudaEventElapsedTime(time_concurrent_ms, start_event, stop_event)
+    if (istat /= 0) stop "Event elapsed time failed"
 
     C_concurrent = C_d
 
@@ -111,19 +154,19 @@ program fifth_task
     end do
     deallocate(handles, streams)
 
-    gflops_serial = flops / (dble(time_serial)) / 1d9
-    gflops_conc   = flops / (dble(time_concurrent)) / 1d9
-    bandwidth = bytes_total / (dble(time_serial)) / 1d9
+    gflops_serial = flops / (dble(time_serial_ms) * 1d-3) / 1d9
+    gflops_conc   = flops / (dble(time_concurrent_ms) * 1d-3) / 1d9
+    bandwidth = bytes_total / (dble(time_serial_ms) * 1d-3) / 1d9
 
     write(*,'(/,a)') "────────────────────────────────────────────────────────────────────"
-    write(*,'(a20,2x,a10,2x,a10,2x,a10)') "Mode", "Time(s)", "GFLOPS", "BW(GB/s)"
+    write(*,'(a20,2x,a10,2x,a10,2x,a10)') "Mode", "Time(ms)", "GFLOPS", "BW(GB/s)"
     write(*,'(a)') "────────────────────────────────────────────────────────────────────"
-    write(*,'(a20,2x,f10.5,2x,f10.2,2x,f10.2)') "Serial", &
-        time_serial, gflops_serial, bandwidth
-    write(*,'(a20,2x,f10.5,2x,f10.2,2x,a10)') "Concurrent", &
-        time_concurrent, gflops_conc, "    ---"
+    write(*,'(a20,2x,f10.2,2x,f10.2,2x,f10.2)') "Serial", &
+        time_serial_ms, gflops_serial, bandwidth
+    write(*,'(a20,2x,f10.2,2x,f10.2,2x,a10)') "Concurrent", &
+        time_concurrent_ms, gflops_conc, "    ---"
     write(*,'(a)') "────────────────────────────────────────────────────────────────────"
-    write(*,'(a,f6.2)') "Speedup (concurrent/serial): ", time_serial / time_concurrent
+    write(*,'(a,f6.2)') "Speedup (concurrent/serial): ", time_serial_ms / time_concurrent_ms
 
     block
         real(8) :: max_diff
@@ -136,7 +179,8 @@ program fifth_task
         end if
     end block
 
+    istat = cudaEventDestroy(start_event)
+    istat = cudaEventDestroy(stop_event)
     deallocate(A, B, C_serial, C_concurrent, A_d, B_d, C_d)
 
 end program fifth_task
-
